@@ -61,6 +61,9 @@ class LocationService : Service() {
 
         const val ACTION_TRIM_BUFFER =
             "uk.co.chrishackman.hacktrack.TRIM_BUFFER"
+
+        const val ACTION_START =
+            "uk.co.chrishackman.hacktrack.START"
     }
 
     private lateinit var fusedLocationClient:
@@ -126,6 +129,10 @@ class LocationService : Service() {
         flags: Int,
         startId: Int
     ): Int {
+
+        if (intent?.action == ACTION_START) {
+            database.clear()
+        }
 
         if (
             intent?.action ==
@@ -320,8 +327,6 @@ class LocationService : Service() {
             database.delete(point.id)
 
             updateNotification()
-
-            delay(150L)
         }
 
         /*

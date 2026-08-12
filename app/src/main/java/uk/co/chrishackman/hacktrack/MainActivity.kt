@@ -260,7 +260,7 @@ class MainActivity : ComponentActivity() {
                                     bufferMenuExpanded = false
 
                                     /*
-                                     * Trim an existing queue immediately
+                                     * Trim an existing queue
                                      * if the new setting is smaller.
                                      */
                                     // CCH sendTrimBufferRequest() /* But new limit will be enforced when next point is added */

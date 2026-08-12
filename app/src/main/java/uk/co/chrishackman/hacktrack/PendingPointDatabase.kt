@@ -198,4 +198,8 @@ class PendingPointDatabase(context: Context) :
             arrayOf(maxPoints)
         )
     }
+
+    fun clear() {
+        writableDatabase.delete(TABLE, null, null)
+    }
 }
