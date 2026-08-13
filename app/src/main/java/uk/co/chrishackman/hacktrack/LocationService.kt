@@ -59,11 +59,17 @@ class LocationService : Service() {
         const val EXTRA_ONLINE =
             "online"
 
+        const val EXTRA_STOPPING =
+            "stopping"
+
         const val ACTION_TRIM_BUFFER =
             "uk.co.chrishackman.hacktrack.TRIM_BUFFER"
 
         const val ACTION_START =
             "uk.co.chrishackman.hacktrack.START"
+
+        const val ACTION_STOP_ACQUISITION =
+            "uk.co.chrishackman.hacktrack.STOP_ACQUISITION"
     }
 
     private lateinit var fusedLocationClient:
@@ -79,7 +85,14 @@ class LocationService : Service() {
 
     private var lastStoredOfflineLocation: Location? = null
 
-    private var transmissionJob: Job? = null
+    private var uploaderJob: Job? = null
+
+    private var isStopping = false
+
+    private val workSignal =
+        kotlinx.coroutines.channels.Channel<Unit>(
+            kotlinx.coroutines.channels.Channel.CONFLATED
+        )
 
     private val serviceScope =
         CoroutineScope(
@@ -97,6 +110,8 @@ class LocationService : Service() {
                     result.lastLocation ?: return
 
                 latestLocation = location
+
+                storeIfMeaningful(location)
 
                 updateNotification()
             }
@@ -134,6 +149,23 @@ class LocationService : Service() {
             database.clear()
         }
 
+        if (intent?.action == ACTION_STOP_ACQUISITION) {
+
+            fusedLocationClient.removeLocationUpdates(
+                locationCallback
+            )
+
+            isStopping = true
+
+            if (database.count() == 0) {
+                stopSelf()
+            } else {
+                updateNotification()
+            }
+
+            return START_STICKY
+        }
+
         if (
             intent?.action ==
             ACTION_TRIM_BUFFER
@@ -152,7 +184,7 @@ class LocationService : Service() {
         )
 
         startLocationUpdates()
-        startTransmissionLoop()
+        startUploader()
 
         return START_STICKY
     }
@@ -180,62 +212,65 @@ class LocationService : Service() {
         )
     }
 
-    private fun startTransmissionLoop() {
+    private fun startUploader() {
 
-        if (transmissionJob?.isActive == true) {
+        if (uploaderJob?.isActive == true) {
             return
         }
 
-        transmissionJob =
+        uploaderJob =
             serviceScope.launch {
 
                 while (isActive) {
 
-                    delay(5000L)
+                    /*
+                     * Wait for work.
+                     */
+                    workSignal.receive()
 
-                    val location =
-                        latestLocation
-                            ?: continue
+                    /*
+                     * Drain the database.
+                     */
+                    while (isActive) {
 
-                    transmitCurrentLocation(location)
+                        val point =
+                            database.oldest()
+
+                        if (point == null) {
+
+                            if (isStopping) {
+                                stopSelf()
+                            }
+
+                            break
+                        }
+
+                        val success =
+                            sendPendingPoint(point)
+
+                        if (!success) {
+
+                            /*
+                             * Network failure. Wait 5 seconds
+                             * before retrying.
+                             */
+                            updateNotification()
+                            delay(5000L)
+                            continue
+                        }
+
+                        database.delete(point.id)
+
+                        updateNotification()
+                    }
                 }
             }
-    }
-
-    private suspend fun transmitCurrentLocation(
-        location: Location
-    ) {
 
         /*
-         * If we already have pending points, we are in
-         * recovery mode. Store a meaningful new point
-         * before attempting to send anything.
+         * Initial poke to drain anything left
+         * from a previous run.
          */
-        if (database.count() > 0) {
-
-            storeIfMeaningful(location)
-
-            drainPendingPoints()
-
-            return
-        }
-
-        /*
-         * Normal operation: send the current point
-         * immediately. If transmission fails, retain it.
-         */
-        val success =
-            sendLocation(
-                location,
-                battery = getBatteryPercentage()
-            )
-
-        if (!success) {
-
-            storeOfflinePoint(location)
-
-            updateNotification()
-        }
+        workSignal.trySend(Unit)
     }
 
     private fun storeIfMeaningful(
@@ -299,6 +334,8 @@ class LocationService : Service() {
             Location(location)
 
         trimOfflineBuffer()
+
+        workSignal.trySend(Unit)
     }
 
     private fun trimOfflineBuffer() {
@@ -307,36 +344,6 @@ class LocationService : Service() {
             HackTrackSettings.getBufferPoints(this)
 
         database.trimTo(maximum)
-    }
-
-    private suspend fun drainPendingPoints() {
-
-        while (currentCoroutineContext().isActive) {
-
-            val point =
-                database.oldest()
-                    ?: break
-
-            val success =
-                sendPendingPoint(point)
-
-            if (!success) {
-                break
-            }
-
-            database.delete(point.id)
-
-            updateNotification()
-        }
-
-        /*
-         * If the queue is now empty, reset the
-         * offline reference. The next failed point
-         * will become the first point of a new outage.
-         */
-        if (database.count() == 0) {
-            lastStoredOfflineLocation = null
-        }
     }
 
     private suspend fun sendPendingPoint(
@@ -352,38 +359,6 @@ class LocationService : Service() {
             speed = point.speed,
             bearing = point.bearing,
             battery = point.battery
-        )
-    }
-
-    private suspend fun sendLocation(
-        location: Location,
-        battery: Int
-    ): Boolean {
-
-        return sendValues(
-            timestamp = location.time,
-            lat = location.latitude,
-            lon = location.longitude,
-            hdop = HDOP,
-            altitude =
-                if (location.hasAltitude()) {
-                    location.altitude
-                } else {
-                    0.0
-                },
-            speed =
-                if (location.hasSpeed()) {
-                    location.speed.toDouble()
-                } else {
-                    0.0
-                },
-            bearing =
-                if (location.hasBearing()) {
-                    location.bearing.toDouble()
-                } else {
-                    0.0
-                },
-            battery = battery
         )
     }
 
@@ -479,16 +454,14 @@ class LocationService : Service() {
 
     private fun updateNotification() {
 
-        val location =
-            latestLocation
-                ?: return
-
         val speedKph =
-            if (location.hasSpeed()) {
-                location.speed * 3.6
-            } else {
-                0.0
-            }
+            latestLocation?.let {
+                if (it.hasSpeed()) {
+                    it.speed * 3.6
+                } else {
+                    0.0
+                }
+            } ?: 0.0
 
         val battery =
             getBatteryPercentage()
@@ -496,14 +469,20 @@ class LocationService : Service() {
         val pending =
             database.count()
 
-        broadcastStatus(
-            online = pending == 0
-        )
+        broadcastStatus()
+
+        val prefix =
+            if (isStopping) {
+                "Stopping…"
+            } else {
+                ""
+            }
 
         val text =
             String.format(
                 Locale.UK,
-                "%.1f kph • %d%% • %d pending",
+                "%s %.1f kph • %d%% • %d pending",
+                prefix,
                 speedKph,
                 battery,
                 pending
@@ -545,7 +524,7 @@ class LocationService : Service() {
             }
         )
 
-        transmissionJob?.cancel()
+        uploaderJob?.cancel()
 
         fusedLocationClient
             .removeLocationUpdates(
@@ -582,12 +561,13 @@ class LocationService : Service() {
         ).createNotificationChannel(channel)
     }
 
-    private fun broadcastStatus(
-        online: Boolean
-    ) {
+    private fun broadcastStatus() {
 
         val location =
             latestLocation
+
+        val pending =
+            database.count()
 
         val intent =
             Intent(ACTION_STATUS).apply {
@@ -595,7 +575,16 @@ class LocationService : Service() {
                 setPackage(packageName)
 
                 putExtra(EXTRA_TRACKING, true)
-                putExtra(EXTRA_ONLINE, online)
+                putExtra(EXTRA_STOPPING, isStopping)
+
+                /*
+                 * We consider the service "online" if there
+                 * are no pending points, OR if we are
+                 * actively draining the database.
+                 * For simplicity in the UI, we'll just
+                 * send the pending count.
+                 */
+                putExtra(EXTRA_ONLINE, pending == 0)
 
                 putExtra(
                     EXTRA_BATTERY,
@@ -604,7 +593,7 @@ class LocationService : Service() {
 
                 putExtra(
                     EXTRA_PENDING,
-                    database.count()
+                    pending
                 )
 
                 if (location != null) {

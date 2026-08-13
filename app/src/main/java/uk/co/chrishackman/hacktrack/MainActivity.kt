@@ -35,6 +35,7 @@ import androidx.compose.material3.OutlinedButton
 class MainActivity : ComponentActivity() {
 
     private var tracking by mutableStateOf(false)
+    private var stopping by mutableStateOf(false)
     private var online by mutableStateOf(false)
     private var latitude by mutableStateOf<Double?>(null)
     private var longitude by mutableStateOf<Double?>(null)
@@ -92,6 +93,12 @@ class MainActivity : ComponentActivity() {
                 tracking =
                     intent.getBooleanExtra(
                         LocationService.EXTRA_TRACKING,
+                        false
+                    )
+
+                stopping =
+                    intent.getBooleanExtra(
+                        LocationService.EXTRA_STOPPING,
                         false
                     )
 
@@ -168,7 +175,13 @@ class MainActivity : ComponentActivity() {
 
                 if (tracking) {
 
-                    Text("● TRACKING")
+                    Text(
+                        if (stopping) {
+                            "● STOPPING…"
+                        } else {
+                            "● TRACKING"
+                        }
+                    )
 
                     Spacer(
                         modifier = Modifier.height(20.dp)
@@ -276,9 +289,16 @@ class MainActivity : ComponentActivity() {
                     Button(
                         onClick = {
                             stopTracking()
-                        }
+                        },
+                        enabled = !stopping
                     ) {
-                        Text("STOP")
+                        Text(
+                            if (stopping) {
+                                "STOPPING…"
+                            } else {
+                                "STOP"
+                            }
+                        )
                     }
 
                 } else {
@@ -383,16 +403,16 @@ class MainActivity : ComponentActivity() {
 
     private fun stopTracking() {
 
-        stopService(
+        val intent =
             Intent(
                 this,
                 LocationService::class.java
-            )
-        )
+            ).apply {
+                action =
+                    LocationService.ACTION_STOP_ACQUISITION
+            }
 
-        tracking = false
-        online = false
-        pending = 0
+        startService(intent)
     }
 
     private fun sendTrimBufferRequest() {
