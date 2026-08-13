@@ -9,6 +9,7 @@
     <!-- Required for a location foreground service on Android 14+ -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_LOCATION" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
     <!-- We'll be sending the GPS data to the Worker -->
     <uses-permission android:name="android.permission.INTERNET" />

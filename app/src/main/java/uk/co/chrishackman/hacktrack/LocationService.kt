@@ -32,8 +32,6 @@ class LocationService : Service() {
         private const val TRACKER_URL =
             "https://walker-tracker.chris-hackman.workers.dev/update"
 
-        private const val HDOP = 5.0
-
         // Don't store another point while the location has
         // moved less than this distance during an outage.
         private const val OFFLINE_DISTANCE_METRES = 2.0
@@ -46,6 +44,9 @@ class LocationService : Service() {
 
         const val EXTRA_LON =
             "lon"
+
+        const val EXTRA_ACCURACY =
+            "accuracy"
 
         const val EXTRA_SPEED_KPH =
             "speedKph"
@@ -306,7 +307,12 @@ class LocationService : Service() {
                 timestamp = location.time,
                 lat = location.latitude,
                 lon = location.longitude,
-                hdop = HDOP,
+                hdop =
+                    if (location.hasAccuracy()) {
+                        location.accuracy.toDouble()
+                    } else {
+                        0.0
+                    },
                 altitude = getBestAltitude(location),
                 speed =
                     if (location.hasSpeed()) {
@@ -522,11 +528,7 @@ class LocationService : Service() {
             return location.mslAltitudeMeters
         }
 
-        return if (location.hasAltitude()) {
-            location.altitude
-        } else {
-            0.0
-        }
+        return GeoidConverter.getMslAltitude(location)
     }
 
     override fun onDestroy() {
@@ -619,6 +621,15 @@ class LocationService : Service() {
                     putExtra(
                         EXTRA_LON,
                         location.longitude
+                    )
+
+                    putExtra(
+                        EXTRA_ACCURACY,
+                        if (location.hasAccuracy()) {
+                            location.accuracy.toDouble()
+                        } else {
+                            0.0
+                        }
                     )
 
                     putExtra(

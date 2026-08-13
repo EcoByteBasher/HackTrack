@@ -6,30 +6,32 @@ import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
 import android.content.pm.PackageManager
+import android.os.BatteryManager
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
-import androidx.activity.result.ActivityResultLauncher
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.padding
-import androidx.compose.material3.Button
-import androidx.compose.material3.Text
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.*
+import androidx.compose.material3.*
+import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import java.util.Locale
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
-import androidx.compose.material3.OutlinedButton
 
 @Suppress("InvalidFragmentVersionForActivityResult")
 class MainActivity : ComponentActivity() {
@@ -39,6 +41,7 @@ class MainActivity : ComponentActivity() {
     private var online by mutableStateOf(false)
     private var latitude by mutableStateOf<Double?>(null)
     private var longitude by mutableStateOf<Double?>(null)
+    private var accuracy by mutableStateOf(0.0)
     private var speedKph by mutableStateOf(0.0)
     private var battery by mutableStateOf(0)
     private var pending by mutableStateOf(0)
@@ -61,8 +64,18 @@ class MainActivity : ComponentActivity() {
                 permissions[Manifest.permission.ACCESS_COARSE_LOCATION] == true
 
             if (fineGranted || coarseGranted) {
-                requestBackgroundLocation()
+                checkNotificationPermissionAndStart()
             }
+        }
+
+    private val notificationPermissionLauncher =
+        registerForActivityResult(
+            ActivityResultContracts.RequestPermission()
+        ) { _ ->
+            // Whether granted or not, we try to start.
+            // If denied, the service just won't show a notification
+            // (and might be killed earlier).
+            requestBackgroundLocation()
         }
 
     private val backgroundLocationLauncher =
@@ -138,6 +151,12 @@ class MainActivity : ComponentActivity() {
                             0.0
                         )
 
+                    accuracy =
+                        intent.getDoubleExtra(
+                            LocationService.EXTRA_ACCURACY,
+                            0.0
+                        )
+
                     speedKph =
                         intent.getDoubleExtra(
                             LocationService.EXTRA_SPEED_KPH,
@@ -155,169 +174,319 @@ class MainActivity : ComponentActivity() {
         bufferMinutes =
             HackTrackSettings.getBufferMinutes(this)
 
-        setContent {
+        battery = getInitialBatteryLevel()
 
+        setContent {
+            MaterialTheme {
+                DashboardScreen()
+            }
+        }
+    }
+
+    @OptIn(ExperimentalMaterial3Api::class)
+    @Composable
+    fun DashboardScreen() {
+        Scaffold(
+            topBar = {
+                LargeTopAppBar(
+                    title = { Text("HackTrack") },
+                    actions = {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.padding(end = 16.dp)
+                        ) {
+                            Icon(
+                                Icons.Default.BatteryFull,
+                                contentDescription = null,
+                                tint = if (battery < 20) Color.Red else Color.Unspecified
+                            )
+                            Text(
+                                " $battery%",
+                                style = MaterialTheme.typography.titleMedium
+                            )
+                        }
+                    },
+                    colors = TopAppBarDefaults.largeTopAppBarColors(
+                        containerColor = MaterialTheme.colorScheme.surface
+                    )
+                )
+            }
+        ) { paddingValues ->
             Column(
                 modifier = Modifier
                     .fillMaxSize()
-                    .padding(32.dp),
-                horizontalAlignment =
-                    Alignment.CenterHorizontally,
-                verticalArrangement =
-                    Arrangement.Center
+                    .padding(paddingValues)
+                    .padding(16.dp)
+                    .verticalScroll(rememberScrollState()),
+                horizontalAlignment = Alignment.CenterHorizontally
             ) {
+                // Status Section
+                StatusHeader()
 
-                Text("HackTrack")
+                Spacer(modifier = Modifier.height(16.dp))
 
-                Spacer(
-                    modifier = Modifier.height(24.dp)
-                )
-
+                // Primary Data Card (Speed/Ready)
                 if (tracking) {
-
-                    Text(
-                        if (stopping) {
-                            "● STOPPING…"
-                        } else {
-                            "● TRACKING"
-                        }
+                    DataCard(
+                        icon = Icons.Default.Speed,
+                        label = "Speed",
+                        value = String.format(Locale.UK, "%.1f", speedKph),
+                        unit = "kph",
+                        modifier = Modifier.fillMaxWidth()
                     )
-
-                    Spacer(
-                        modifier = Modifier.height(20.dp)
-                    )
-
-                    if (
-                        latitude != null &&
-                        longitude != null
-                    ) {
-
-                        Text(
-                            String.format(
-                                Locale.UK,
-                                "GPS       %.6f, %.6f",
-                                latitude,
-                                longitude
-                            )
-                        )
-                    }
-
-                    Text(
-                        String.format(
-                            Locale.UK,
-                            "Speed     %.1f kph",
-                            speedKph
-                        )
-                    )
-
-                    Text(
-                        "Battery   $battery%"
-                    )
-
-                    Text(
-                        if (online) {
-                            "Network   Connected"
-                        } else {
-                            "Network   Offline"
-                        }
-                    )
-
-                    Text(
-                        "Pending   $pending points"
-                    )
-
-                    Spacer(
-                        modifier = Modifier.height(16.dp)
-                    )
-
-                    Text("Offline buffer")
-
-                    OutlinedButton(
-                        onClick = {
-                            bufferMenuExpanded = true
-                        }
-                    ) {
-                        Text(
-                            HackTrackSettings.formatBufferDuration(
-                                bufferMinutes
-                            )
-                        )
-                    }
-
-                    DropdownMenu(
-                        expanded = bufferMenuExpanded,
-                        onDismissRequest = {
-                            bufferMenuExpanded = false
-                        }
-                    ) {
-
-                        HackTrackSettings.BUFFER_OPTIONS.forEach { minutes ->
-
-                            DropdownMenuItem(
-                                text = {
-                                    Text(
-                                        HackTrackSettings.formatBufferDuration(
-                                            minutes
-                                        )
-                                    )
-                                },
-                                onClick = {
-
-                                    bufferMinutes = minutes
-
-                                    HackTrackSettings.setBufferMinutes(
-                                        this@MainActivity,
-                                        minutes
-                                    )
-
-                                    bufferMenuExpanded = false
-
-                                    /*
-                                     * Trim an existing queue
-                                     * if the new setting is smaller.
-                                     */
-                                    // CCH sendTrimBufferRequest() /* But new limit will be enforced when next point is added */
-                                }
-                            )
-                        }
-                    }
-
-                    Spacer(
-                        modifier = Modifier.height(24.dp)
-                    )
-
-                    Button(
-                        onClick = {
-                            stopTracking()
-                        },
-                        enabled = !stopping
-                    ) {
-                        Text(
-                            if (stopping) {
-                                "STOPPING…"
-                            } else {
-                                "STOP"
-                            }
-                        )
-                    }
-
                 } else {
-
-                    Text("STOPPED")
-
-                    Spacer(
-                        modifier = Modifier.height(24.dp)
-                    )
-
-                    Button(
-                        onClick = {
-                            startTrackingWithPermissionCheck()
-                        }
+                    Card(
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = CardDefaults.cardColors(
+                            containerColor = MaterialTheme.colorScheme.surfaceVariant
+                        )
                     ) {
-                        Text("START")
+                        Column(
+                            modifier = Modifier.padding(24.dp).fillMaxWidth(),
+                            horizontalAlignment = Alignment.CenterHorizontally
+                        ) {
+                            Icon(
+                                Icons.Default.LocationOn,
+                                null,
+                                modifier = Modifier.size(48.dp),
+                                tint = MaterialTheme.colorScheme.outline
+                            )
+                            Spacer(Modifier.height(12.dp))
+                            Text(
+                                "Ready to Track",
+                                style = MaterialTheme.typography.titleLarge,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
                     }
                 }
+
+                Spacer(modifier = Modifier.height(16.dp))
+
+                // Secondary Data Grid (Accuracy/Pending)
+                Row(modifier = Modifier.fillMaxWidth()) {
+                    DataCard(
+                        icon = Icons.Default.LocationOn,
+                        label = "Accuracy",
+                        value = if (tracking && accuracy > 0.0) String.format(
+                            Locale.UK,
+                            "±%.1f",
+                            accuracy
+                        ) else "--",
+                        unit = "m",
+                        modifier = Modifier.weight(1f)
+                    )
+                    Spacer(modifier = Modifier.width(16.dp))
+                    DataCard(
+                        icon = if (online && pending == 0) Icons.Default.CloudDone
+                        else if (pending > 0) Icons.Default.CloudUpload
+                        else Icons.Default.CloudOff,
+                        label = "Pending",
+                        value = "$pending",
+                        unit = "pts",
+                        modifier = Modifier.weight(1f),
+                        color = if (pending > 0) MaterialTheme.colorScheme.error else Color.Unspecified
+                    )
+                }
+
+                Spacer(modifier = Modifier.height(16.dp))
+
+                // Location Details Card
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
+                    )
+                ) {
+                    Column(modifier = Modifier.padding(16.dp)) {
+                        Text(
+                            "Last Known Coordinates",
+                            style = MaterialTheme.typography.labelMedium
+                        )
+                        if (latitude != null && longitude != null) {
+                            Text(
+                                String.format(
+                                    Locale.UK,
+                                    "%.6f, %.6f",
+                                    latitude,
+                                    longitude
+                                ),
+                                style = MaterialTheme.typography.bodyLarge,
+                                fontFamily = FontFamily.Monospace
+                            )
+                        } else {
+                            Text("No GPS lock yet")
+                        }
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(16.dp))
+
+                // Buffer Setting
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Text(
+                        "Offline Buffer",
+                        style = MaterialTheme.typography.titleMedium
+                    )
+                    Box {
+                        OutlinedButton(
+                            onClick = { bufferMenuExpanded = true },
+                            enabled = !stopping
+                        ) {
+                            Icon(Icons.Default.Settings, null)
+                            Spacer(Modifier.width(8.dp))
+                            Text(HackTrackSettings.formatBufferDuration(bufferMinutes))
+                        }
+                        DropdownMenu(
+                            expanded = bufferMenuExpanded,
+                            onDismissRequest = { bufferMenuExpanded = false }
+                        ) {
+                            HackTrackSettings.BUFFER_OPTIONS.forEach { minutes ->
+                                DropdownMenuItem(
+                                    text = { Text(HackTrackSettings.formatBufferDuration(minutes)) },
+                                    onClick = {
+                                        bufferMinutes = minutes
+                                        HackTrackSettings.setBufferMinutes(this@MainActivity, minutes)
+                                        bufferMenuExpanded = false
+                                    }
+                                )
+                            }
+                        }
+                    }
+                }
+
+                Spacer(modifier = Modifier.weight(1f))
+
+                // Glove-friendly Action Button
+                MainActionButton()
             }
+        }
+    }
+
+    @Composable
+    fun StatusHeader() {
+        val containerColor = when {
+            stopping -> MaterialTheme.colorScheme.errorContainer
+            tracking -> MaterialTheme.colorScheme.primaryContainer
+            else -> MaterialTheme.colorScheme.surfaceVariant
+        }
+
+        val contentColor = when {
+            stopping -> MaterialTheme.colorScheme.onErrorContainer
+            tracking -> MaterialTheme.colorScheme.onPrimaryContainer
+            else -> MaterialTheme.colorScheme.onSurfaceVariant
+        }
+
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            colors = CardDefaults.cardColors(
+                containerColor = containerColor,
+                contentColor = contentColor
+            )
+        ) {
+            Row(
+                modifier = Modifier
+                    .padding(24.dp)
+                    .fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.Center
+            ) {
+                if (stopping) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(24.dp),
+                        color = contentColor,
+                        strokeWidth = 2.dp
+                    )
+                } else {
+                    Box(
+                        modifier = Modifier
+                            .size(12.dp)
+                            .background(
+                                color = if (tracking) Color.Green else Color.Gray,
+                                shape = CircleShape
+                            )
+                    )
+                }
+                Spacer(modifier = Modifier.width(16.dp))
+                Text(
+                    text = when {
+                        stopping -> "STOPPING…"
+                        tracking -> "TRACKING ACTIVE"
+                        else -> "STOPPED"
+                    },
+                    style = MaterialTheme.typography.headlineSmall,
+                    fontWeight = FontWeight.Bold
+                )
+            }
+        }
+    }
+
+    @Composable
+    fun DataCard(
+        icon: ImageVector,
+        label: String,
+        value: String,
+        unit: String,
+        modifier: Modifier = Modifier,
+        color: Color = Color.Unspecified
+    ) {
+        Card(
+            modifier = modifier
+        ) {
+            Column(modifier = Modifier.padding(16.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(icon, null, modifier = Modifier.size(16.dp), tint = color)
+                    Spacer(Modifier.width(8.dp))
+                    Text(label, style = MaterialTheme.typography.labelMedium)
+                }
+                Row(verticalAlignment = Alignment.Bottom) {
+                    Text(
+                        value,
+                        style = MaterialTheme.typography.displayMedium,
+                        fontWeight = FontWeight.Black,
+                        color = color
+                    )
+                    Spacer(Modifier.width(4.dp))
+                    Text(
+                        unit,
+                        style = MaterialTheme.typography.titleMedium,
+                        modifier = Modifier.padding(bottom = 8.dp)
+                    )
+                }
+            }
+        }
+    }
+
+    @Composable
+    fun MainActionButton() {
+        Button(
+            onClick = {
+                if (tracking) stopTracking() else startTrackingWithPermissionCheck()
+            },
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(80.dp), // Extra tall for gloves
+            shape = MaterialTheme.shapes.large,
+            enabled = !stopping,
+            colors = ButtonDefaults.buttonColors(
+                containerColor = if (tracking) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary
+            )
+        ) {
+            Icon(
+                if (tracking) Icons.Default.Stop else Icons.Default.PlayArrow,
+                null,
+                modifier = Modifier.size(32.dp)
+            )
+            Spacer(Modifier.width(12.dp))
+            Text(
+                if (tracking) "STOP TRACKING" else "START TRACKING",
+                style = MaterialTheme.typography.headlineSmall,
+                fontWeight = FontWeight.Bold
+            )
         }
     }
 
@@ -339,6 +508,17 @@ class MainActivity : ComponentActivity() {
         unregisterReceiver(statusReceiver)
 
         super.onStop()
+    }
+
+    private fun getInitialBatteryLevel(): Int {
+        val batteryManager =
+            getSystemService(
+                Context.BATTERY_SERVICE
+            ) as BatteryManager
+
+        return batteryManager.getIntProperty(
+            BatteryManager.BATTERY_PROPERTY_CAPACITY
+        )
     }
 
     private fun startTrackingWithPermissionCheck() {
@@ -367,6 +547,27 @@ class MainActivity : ComponentActivity() {
             return
         }
 
+        checkNotificationPermissionAndStart()
+    }
+
+    private fun checkNotificationPermissionAndStart() {
+
+        if (android.os.Build.VERSION.SDK_INT >= 33) {
+
+            val granted =
+                ContextCompat.checkSelfPermission(
+                    this,
+                    Manifest.permission.POST_NOTIFICATIONS
+                ) == PackageManager.PERMISSION_GRANTED
+
+            if (!granted) {
+                notificationPermissionLauncher.launch(
+                    Manifest.permission.POST_NOTIFICATIONS
+                )
+                return
+            }
+        }
+
         requestBackgroundLocation()
     }
 
@@ -388,6 +589,8 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun startTracking() {
+
+        stopping = false
 
         val intent =
             Intent(
