@@ -36,7 +36,7 @@ class LocationService : Service() {
 
         // Don't store another point while the location has
         // moved less than this distance during an outage.
-        private const val OFFLINE_DISTANCE_METRES = 10.0
+        private const val OFFLINE_DISTANCE_METRES = 2.0
 
         const val EXTRA_TRACKING =
             "tracking"
@@ -134,7 +134,7 @@ class LocationService : Service() {
                 Priority.PRIORITY_HIGH_ACCURACY,
                 5000L
             )
-                .setMinUpdateIntervalMillis(2500L)
+                .setMinUpdateIntervalMillis(5000L)
                 .setMaxUpdateDelayMillis(5000L)
                 .build()
     }
@@ -307,12 +307,7 @@ class LocationService : Service() {
                 lat = location.latitude,
                 lon = location.longitude,
                 hdop = HDOP,
-                altitude =
-                    if (location.hasAltitude()) {
-                        location.altitude
-                    } else {
-                        0.0
-                    },
+                altitude = getBestAltitude(location),
                 speed =
                     if (location.hasSpeed()) {
                         location.speed.toDouble()
@@ -514,6 +509,24 @@ class LocationService : Service() {
             )
             .setOngoing(true)
             .build()
+    }
+
+    private fun getBestAltitude(
+        location: Location
+    ): Double {
+
+        if (
+            android.os.Build.VERSION.SDK_INT >= 34 &&
+            location.hasMslAltitude()
+        ) {
+            return location.mslAltitudeMeters
+        }
+
+        return if (location.hasAltitude()) {
+            location.altitude
+        } else {
+            0.0
+        }
     }
 
     override fun onDestroy() {
