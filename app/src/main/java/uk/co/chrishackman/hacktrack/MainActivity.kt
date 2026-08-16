@@ -11,6 +11,7 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.core.*
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
@@ -27,6 +28,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -121,11 +123,15 @@ class MainActivity : ComponentActivity() {
                         false
                     )
 
-                battery =
+                val newBattery =
                     intent.getIntExtra(
                         LocationService.EXTRA_BATTERY,
-                        0
+                        -1
                     )
+
+                if (newBattery != -1) {
+                    battery = newBattery
+                }
 
                 pending =
                     intent.getIntExtra(
@@ -186,10 +192,32 @@ class MainActivity : ComponentActivity() {
     @OptIn(ExperimentalMaterial3Api::class)
     @Composable
     fun DashboardScreen() {
+        val context = androidx.compose.ui.platform.LocalContext.current
+        val versionName = try {
+            val packageInfo = context.packageManager.getPackageInfo(context.packageName, 0)
+            packageInfo.versionName
+        } catch (e: Exception) {
+            "1.0"
+        }
+
         Scaffold(
             topBar = {
                 LargeTopAppBar(
-                    title = { Text("HackTrack") },
+                    title = {
+                        Row(verticalAlignment = Alignment.Bottom) {
+                            Text(
+                                "HackTrack",
+                                color = Color(0xFFF57C00) // Orange
+                            )
+                            Spacer(Modifier.width(8.dp))
+                            Text(
+                                "v$versionName",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = Color.Black,
+                                modifier = Modifier.padding(bottom = 4.dp)
+                            )
+                        }
+                    },
                     actions = {
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
@@ -329,7 +357,7 @@ class MainActivity : ComponentActivity() {
                     horizontalArrangement = Arrangement.SpaceBetween
                 ) {
                     Text(
-                        "Offline Buffer",
+                        "Offline Buffer Length",
                         style = MaterialTheme.typography.titleMedium
                     )
                     Box {
@@ -369,13 +397,28 @@ class MainActivity : ComponentActivity() {
 
     @Composable
     fun StatusHeader() {
+        val infiniteTransition = rememberInfiniteTransition(label = "pulse")
+        val alpha by infiniteTransition.animateFloat(
+            initialValue = 0.4f,
+            targetValue = 1f,
+            animationSpec = infiniteRepeatable(
+                animation = tween(1000),
+                repeatMode = RepeatMode.Reverse
+            ),
+            label = "alpha"
+        )
+
+        val isRecovering = pending > 0 && online
+
         val containerColor = when {
+            isRecovering -> MaterialTheme.colorScheme.tertiaryContainer
             stopping -> MaterialTheme.colorScheme.errorContainer
             tracking -> MaterialTheme.colorScheme.primaryContainer
             else -> MaterialTheme.colorScheme.surfaceVariant
         }
 
         val contentColor = when {
+            isRecovering -> MaterialTheme.colorScheme.onTertiaryContainer
             stopping -> MaterialTheme.colorScheme.onErrorContainer
             tracking -> MaterialTheme.colorScheme.onPrimaryContainer
             else -> MaterialTheme.colorScheme.onSurfaceVariant
@@ -395,11 +438,14 @@ class MainActivity : ComponentActivity() {
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.Center
             ) {
-                if (stopping) {
-                    CircularProgressIndicator(
-                        modifier = Modifier.size(24.dp),
-                        color = contentColor,
-                        strokeWidth = 2.dp
+                if (isRecovering || stopping) {
+                    Icon(
+                        Icons.Default.CloudUpload,
+                        null,
+                        modifier = Modifier
+                            .size(28.dp)
+                            .graphicsLayer(alpha = alpha),
+                        tint = contentColor
                     )
                 } else {
                     Box(
@@ -414,6 +460,7 @@ class MainActivity : ComponentActivity() {
                 Spacer(modifier = Modifier.width(16.dp))
                 Text(
                     text = when {
+                        isRecovering -> "RECOVERING…"
                         stopping -> "STOPPING…"
                         tracking -> "TRACKING ACTIVE"
                         else -> "STOPPED"
@@ -596,7 +643,10 @@ class MainActivity : ComponentActivity() {
             Intent(
                 this,
                 LocationService::class.java
-            )
+            ).apply {
+                action =
+                    LocationService.ACTION_START
+            }
 
         ContextCompat.startForegroundService(
             this,

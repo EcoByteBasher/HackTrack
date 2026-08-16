@@ -107,12 +107,10 @@ class LocationService : Service() {
                 result: LocationResult
             ) {
 
-                val location =
-                    result.lastLocation ?: return
-
-                latestLocation = location
-
-                storeIfMeaningful(location)
+                for (location in result.locations) {
+                    latestLocation = location
+                    storeIfMeaningful(location)
+                }
 
                 updateNotification()
             }
@@ -148,6 +146,7 @@ class LocationService : Service() {
 
         if (intent?.action == ACTION_START) {
             database.clear()
+            isStopping = false
         }
 
         if (intent?.action == ACTION_STOP_ACQUISITION) {
@@ -158,11 +157,13 @@ class LocationService : Service() {
 
             isStopping = true
 
-            if (database.count() == 0) {
-                stopSelf()
-            } else {
-                updateNotification()
-            }
+            /*
+             * Wake up the uploader to drain remaining points
+             * and then shut down.
+             */
+            workSignal.trySend(Unit)
+
+            updateNotification()
 
             return START_STICKY
         }
@@ -181,7 +182,7 @@ class LocationService : Service() {
 
         startForeground(
             NOTIFICATION_ID,
-            buildNotification("Waiting for GPS…")
+            buildNotification("Waiting for GPS…", true)
         )
 
         startLocationUpdates()
@@ -240,7 +241,13 @@ class LocationService : Service() {
                         if (point == null) {
 
                             if (isStopping) {
+                                /*
+                                 * We are done. Send a final "0 pending"
+                                 * broadcast before stopping the service.
+                                 */
+                                updateNotification(0)
                                 stopSelf()
+                                return@launch
                             }
 
                             break
@@ -286,7 +293,16 @@ class LocationService : Service() {
             val distance =
                 previous.distanceTo(location)
 
-            if (distance < OFFLINE_DISTANCE_METRES) {
+            val timeDelta =
+                location.time - previous.time
+
+            /*
+             * Store if we've moved 2m OR if it's been
+             * more than 60 seconds (heartbeat).
+             */
+            if (distance < OFFLINE_DISTANCE_METRES &&
+                timeDelta < 60_000L
+            ) {
                 return
             }
         }
@@ -422,8 +438,8 @@ class LocationService : Service() {
                             as HttpURLConnection
 
                 connection.requestMethod = "GET"
-                connection.connectTimeout = 5000
-                connection.readTimeout = 5000
+                connection.connectTimeout = 30000
+                connection.readTimeout = 30000
 
                 val responseCode =
                     connection.responseCode
@@ -453,7 +469,9 @@ class LocationService : Service() {
         )
     }
 
-    private fun updateNotification() {
+    private fun updateNotification(
+        forcedPendingCount: Int? = null
+    ) {
 
         val speedKph =
             latestLocation?.let {
@@ -468,9 +486,9 @@ class LocationService : Service() {
             getBatteryPercentage()
 
         val pending =
-            database.count()
+            forcedPendingCount ?: database.count()
 
-        broadcastStatus()
+        broadcastStatus(pending)
 
         val prefix =
             if (isStopping) {
@@ -496,12 +514,13 @@ class LocationService : Service() {
 
         manager.notify(
             NOTIFICATION_ID,
-            buildNotification(text)
+            buildNotification(text, !isStopping)
         )
     }
 
     private fun buildNotification(
-        text: String
+        text: String,
+        ongoing: Boolean
     ): Notification {
 
         return Notification.Builder(
@@ -513,7 +532,7 @@ class LocationService : Service() {
             .setSmallIcon(
                 android.R.drawable.ic_menu_mylocation
             )
-            .setOngoing(true)
+            .setOngoing(ongoing)
             .build()
     }
 
@@ -538,6 +557,14 @@ class LocationService : Service() {
                 putExtra(EXTRA_TRACKING, false)
             }
         )
+
+        val manager =
+            getSystemService(
+                NotificationManager::class.java
+            )
+        manager.cancel(NOTIFICATION_ID)
+
+        stopForeground(STOP_FOREGROUND_REMOVE)
 
         uploaderJob?.cancel()
 
@@ -576,13 +603,12 @@ class LocationService : Service() {
         ).createNotificationChannel(channel)
     }
 
-    private fun broadcastStatus() {
+    private fun broadcastStatus(
+        pendingCount: Int
+    ) {
 
         val location =
             latestLocation
-
-        val pending =
-            database.count()
 
         val intent =
             Intent(ACTION_STATUS).apply {
@@ -599,7 +625,7 @@ class LocationService : Service() {
                  * For simplicity in the UI, we'll just
                  * send the pending count.
                  */
-                putExtra(EXTRA_ONLINE, pending == 0)
+                putExtra(EXTRA_ONLINE, pendingCount == 0)
 
                 putExtra(
                     EXTRA_BATTERY,
@@ -608,7 +634,7 @@ class LocationService : Service() {
 
                 putExtra(
                     EXTRA_PENDING,
-                    pending
+                    pendingCount
                 )
 
                 if (location != null) {
