@@ -6,11 +6,13 @@ import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
 import android.content.pm.PackageManager
+import android.net.Uri
 import android.os.BatteryManager
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
@@ -20,15 +22,12 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
-import androidx.compose.runtime.Composable
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.setValue
+import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -47,6 +46,7 @@ class MainActivity : ComponentActivity() {
     private var speedKph by mutableStateOf(0.0)
     private var battery by mutableStateOf(0)
     private var pending by mutableStateOf(0)
+    private var updateInfo by mutableStateOf(UpdateInfo(isAvailable = false))
 
     private var bufferMinutes by mutableStateOf(
         HackTrackSettings.DEFAULT_BUFFER_MINUTES
@@ -200,6 +200,10 @@ class MainActivity : ComponentActivity() {
             "1.0"
         }
 
+        LaunchedEffect(Unit) {
+            updateInfo = UpdateChecker.checkForUpdate(context)
+        }
+
         Scaffold(
             topBar = {
                 LargeTopAppBar(
@@ -250,6 +254,13 @@ class MainActivity : ComponentActivity() {
             ) {
                 // Status Section
                 StatusHeader()
+
+                AnimatedVisibility(visible = updateInfo.isAvailable) {
+                    Column {
+                        Spacer(modifier = Modifier.height(16.dp))
+                        UpdateBanner(updateInfo)
+                    }
+                }
 
                 Spacer(modifier = Modifier.height(16.dp))
 
@@ -504,6 +515,46 @@ class MainActivity : ComponentActivity() {
                         modifier = Modifier.padding(bottom = 8.dp)
                     )
                 }
+            }
+        }
+    }
+
+    @OptIn(ExperimentalMaterial3Api::class)
+    @Composable
+    fun UpdateBanner(info: UpdateInfo) {
+        val context = androidx.compose.ui.platform.LocalContext.current
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            colors = CardDefaults.cardColors(
+                containerColor = MaterialTheme.colorScheme.secondaryContainer
+            ),
+            onClick = {
+                val intent = Intent(Intent.ACTION_VIEW, Uri.parse(info.downloadUrl))
+                context.startActivity(intent)
+            }
+        ) {
+            Row(
+                modifier = Modifier.padding(16.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Icon(
+                    Icons.Default.SystemUpdate,
+                    null,
+                    tint = MaterialTheme.colorScheme.onSecondaryContainer
+                )
+                Spacer(Modifier.width(16.dp))
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        "Update Available",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Text(
+                        "Version ${info.latestVersion} is ready to download.",
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                }
+                Icon(Icons.Default.ChevronRight, null)
             }
         }
     }
