@@ -17,10 +17,10 @@ object UpdateChecker {
 
     /**
      * Replace this with your actual raw GitHub version.json URL.
-     * Example: https://raw.githubusercontent.com/chrishackman/HackTrack/main/version.json
+     * Example: https://raw.githubusercontent.com/EcoByteBasher/HackTrack/main/version.json
      */
     private const val VERSION_URL = 
-        "https://raw.githubusercontent.com/chrishackman/HackTrack/main/version.json"
+        "https://raw.githubusercontent.com/EcoByteBasher/HackTrack/main/version.json"
 
     suspend fun checkForUpdate(context: Context): UpdateInfo {
         return withContext(Dispatchers.IO) {
