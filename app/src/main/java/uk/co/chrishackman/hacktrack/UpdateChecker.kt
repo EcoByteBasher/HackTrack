@@ -32,6 +32,11 @@ object UpdateChecker {
                 connection.connectTimeout = 5000
                 connection.readTimeout = 5000
                 
+                // Force a fresh fetch
+                connection.useCaches = false
+                connection.setRequestProperty("Cache-Control", "no-cache")
+                connection.setRequestProperty("Pragma", "no-cache")
+                
                 val response = connection.inputStream.bufferedReader().use { it.readText() }
                 connection.disconnect()
 
