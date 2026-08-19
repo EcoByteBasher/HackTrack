@@ -14,12 +14,7 @@ data class UpdateInfo(
 )
 
 object UpdateChecker {
-
-    /**
-     * Replace this with your actual raw GitHub version.json URL.
-     * Example: https://raw.githubusercontent.com/EcoByteBasher/HackTrack/main/version.json
-     */
-    private const val VERSION_URL = 
+    private const val VERSION_URL =
         "https://raw.githubusercontent.com/EcoByteBasher/HackTrack/main/version.json"
 
     suspend fun checkForUpdate(context: Context): UpdateInfo {

@@ -158,8 +158,7 @@ class LocationService : Service() {
             isStopping = true
 
             /*
-             * Wake up the uploader to drain remaining points
-             * and then shut down.
+             * Wake up the uploader immediately.
              */
             workSignal.trySend(Unit)
 
@@ -224,52 +223,79 @@ class LocationService : Service() {
             serviceScope.launch {
 
                 while (isActive) {
+                    try {
+                        /*
+                         * Wait for work.
+                         */
+                        try {
+                            withTimeout(15000L) {
+                                workSignal.receive()
+                            }
+                        } catch (e: Exception) {
+                            // Timeout or cancellation - just check the DB anyway.
+                        }
 
-                    /*
-                     * Wait for work.
-                     */
-                    workSignal.receive()
+                        /*
+                         * Drain the database.
+                         */
+                        while (isActive) {
 
-                    /*
-                     * Drain the database.
-                     */
-                    while (isActive) {
-
-                        val point =
-                            database.oldest()
-
-                        if (point == null) {
-
-                            if (isStopping) {
-                                /*
-                                 * We are done. Send a final "0 pending"
-                                 * broadcast before stopping the service.
-                                 */
-                                updateNotification(0)
-                                stopSelf()
-                                return@launch
+                            val point = try {
+                                database.oldest()
+                            } catch (e: Exception) {
+                                null
                             }
 
-                            break
-                        }
+                            if (point == null) {
+                                /*
+                                 * Double check count to ensure we aren't 
+                                 * exiting due to a database lock.
+                                 */
+                                val remaining = try {
+                                    database.count()
+                                } catch (e: Exception) {
+                                    -1
+                                }
 
-                        val success =
-                            sendPendingPoint(point)
+                                if (remaining == 0) {
+                                    if (isStopping) {
+                                        updateNotification(0)
+                                        stopSelf()
+                                        return@launch
+                                    }
+                                    break
+                                } else {
+                                    // Lock occurred or points still exist.
+                                    delay(2000L)
+                                    continue
+                                }
+                            }
 
-                        if (!success) {
+                            val success =
+                                sendPendingPoint(point)
 
-                            /*
-                             * Network failure. Wait 5 seconds
-                             * before retrying.
-                             */
+                            if (!success) {
+                                updateNotification()
+                                delay(5000L)
+                                continue
+                            }
+
+                            try {
+                                database.delete(point.id)
+                            } catch (e: Exception) {
+                                // Deletion failed, retry this point.
+                                delay(1000L)
+                                continue
+                            }
+
                             updateNotification()
-                            delay(5000L)
-                            continue
                         }
-
-                        database.delete(point.id)
-
-                        updateNotification()
+                    } catch (e: Exception) {
+                        /*
+                         * Fatal loop error (rare). 
+                         * Wait and restart the outer loop.
+                         */
+                        delay(5000L)
                     }
                 }
             }

@@ -42,6 +42,12 @@ class PendingPointDatabase(context: Context) :
         private const val COL_BATTERY = "battery"
     }
 
+    override fun onConfigure(db: SQLiteDatabase) {
+        super.onConfigure(db)
+        // Enable Write-Ahead Logging for better concurrency
+        db.enableWriteAheadLogging()
+    }
+
     override fun onCreate(db: SQLiteDatabase) {
 
         db.execSQL(
