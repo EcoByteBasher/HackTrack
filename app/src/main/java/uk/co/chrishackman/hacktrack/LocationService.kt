@@ -71,6 +71,9 @@ class LocationService : Service() {
 
         const val ACTION_STOP_ACQUISITION =
             "uk.co.chrishackman.hacktrack.STOP_ACQUISITION"
+
+        const val ACTION_GET_STATUS =
+            "uk.co.chrishackman.hacktrack.GET_STATUS"
     }
 
     private lateinit var fusedLocationClient:
@@ -82,13 +85,18 @@ class LocationService : Service() {
     private lateinit var database:
             PendingPointDatabase
 
+    @Volatile
     private var latestLocation: Location? = null
 
     private var lastStoredOfflineLocation: Location? = null
 
     private var uploaderJob: Job? = null
 
+    @Volatile
     private var isStopping = false
+
+    @Volatile
+    private var isTrackingActive = false
 
     private val workSignal =
         kotlinx.coroutines.channels.Channel<Unit>(
@@ -144,48 +152,69 @@ class LocationService : Service() {
         startId: Int
     ): Int {
 
-        if (intent?.action == ACTION_START) {
-            database.clear()
-            isStopping = false
+        when (intent?.action) {
+            ACTION_START -> {
+                database.clear()
+                isStopping = false
+                isTrackingActive = true
+                
+                startForeground(
+                    NOTIFICATION_ID,
+                    buildNotification("Waiting for GPS…", true)
+                )
+
+                startLocationUpdates()
+                startUploader()
+            }
+
+            ACTION_STOP_ACQUISITION -> {
+                fusedLocationClient.removeLocationUpdates(
+                    locationCallback
+                )
+
+                isStopping = true
+                isTrackingActive = false
+
+                /*
+                 * Wake up the uploader immediately.
+                 */
+                workSignal.trySend(Unit)
+
+                updateNotification()
+
+                // If no points to upload, we can stop now
+                if (database.count() == 0) {
+                    stopSelf()
+                }
+            }
+
+            ACTION_TRIM_BUFFER -> {
+                trimOfflineBuffer()
+                updateNotification()
+            }
+
+            ACTION_GET_STATUS -> {
+                updateNotification()
+                // If the service was started just for status and isn't doing anything, stop it
+                if (!isTrackingActive && !isStopping) {
+                    stopSelf()
+                }
+            }
+            
+            else -> {
+                // Handle cases where service might be restarted by system
+                if (isTrackingActive) {
+                    startForeground(
+                        NOTIFICATION_ID,
+                        buildNotification("Resuming tracking…", true)
+                    )
+                    startLocationUpdates()
+                    startUploader()
+                } else if (!isStopping) {
+                    stopSelf()
+                }
+            }
         }
-
-        if (intent?.action == ACTION_STOP_ACQUISITION) {
-
-            fusedLocationClient.removeLocationUpdates(
-                locationCallback
-            )
-
-            isStopping = true
-
-            /*
-             * Wake up the uploader immediately.
-             */
-            workSignal.trySend(Unit)
-
-            updateNotification()
-
-            return START_STICKY
-        }
-
-        if (
-            intent?.action ==
-            ACTION_TRIM_BUFFER
-        ) {
-
-            trimOfflineBuffer()
-
-            updateNotification()
-
-            return START_STICKY
-        }
-
-        startForeground(
-            NOTIFICATION_ID,
-            buildNotification("Waiting for GPS…", true)
-        )
-
-        startLocationUpdates()
-        startUploader()
 
         return START_STICKY
     }
@@ -466,6 +495,9 @@ class LocationService : Service() {
                 connection.requestMethod = "GET"
                 connection.connectTimeout = 30000
                 connection.readTimeout = 30000
+                
+                // Explicitly disable connection pooling to ensure fresh TCP handshake
+                connection.setRequestProperty("Connection", "close")
 
                 val responseCode =
                     connection.responseCode
@@ -477,7 +509,6 @@ class LocationService : Service() {
             } catch (
                 e: Exception
             ) {
-
                 false
             }
         }
@@ -641,7 +672,7 @@ class LocationService : Service() {
 
                 setPackage(packageName)
 
-                putExtra(EXTRA_TRACKING, true)
+                putExtra(EXTRA_TRACKING, isTrackingActive)
                 putExtra(EXTRA_STOPPING, isStopping)
 
                 /*

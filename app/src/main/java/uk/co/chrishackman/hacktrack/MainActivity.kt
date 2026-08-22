@@ -32,6 +32,9 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
+import androidx.lifecycle.lifecycleScope
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import java.util.Locale
 
 @Suppress("InvalidFragmentVersionForActivityResult")
@@ -599,6 +602,29 @@ class MainActivity : ComponentActivity() {
             ),
             ContextCompat.RECEIVER_NOT_EXPORTED
         )
+
+        // Request current status from the service to synchronize UI
+        val intent = Intent(this, LocationService::class.java).apply {
+            action = LocationService.ACTION_GET_STATUS
+        }
+        try {
+            startService(intent)
+        } catch (e: Exception) {
+            // Service not running or inaccessible
+            tracking = false
+            pending = 0
+        }
+
+        // Optional: Reset UI if no status received after a while 
+        // (indicates the service is likely not running)
+        lifecycleScope.launch {
+            delay(2000)
+            // If the service were running, statusReceiver would have 
+            // updated tracking/pending by now. If they are still 
+            // at their initial values (from onCreate or previous state),
+            // and no broadcast was received, we might want to reset.
+            // For now, ACTION_GET_STATUS is the primary sync mechanism.
+        }
     }
 
     override fun onStop() {
